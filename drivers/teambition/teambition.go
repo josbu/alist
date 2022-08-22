@@ -98,7 +98,7 @@ func (driver Teambition) GetFiles(parentId string, account *model.Account) ([]mo
 				Size:      0,
 				Type:      conf.FOLDER,
 				Driver:    driver.Config().Name,
-				UpdatedAt: &collection.Updated,
+				UpdatedAt: collection.Updated,
 			})
 		}
 	}
@@ -126,7 +126,7 @@ func (driver Teambition) GetFiles(parentId string, account *model.Account) ([]mo
 				Size:      work.FileSize,
 				Type:      utils.GetFileType(path.Ext(work.FileName)),
 				Driver:    driver.Config().Name,
-				UpdatedAt: &work.Updated,
+				UpdatedAt: work.Updated,
 				Thumbnail: work.Thumbnail,
 				Url:       work.DownloadURL,
 			})
@@ -157,8 +157,10 @@ func (driver Teambition) upload(file *model.FileStream, token string, account *m
 
 func (driver Teambition) chunkUpload(file *model.FileStream, token string, account *model.Account) (*FileUpload, error) {
 	prefix := "tcs"
+	referer := "https://www.teambition.com/"
 	if account.InternalType == "International" {
 		prefix = "us-tcs"
+		referer = "https://us.teambition.com/"
 	}
 	var newChunk ChunkUpload
 	_, err := base.RestyClient.R().SetResult(&newChunk).SetHeader("Authorization", token).
@@ -187,7 +189,7 @@ func (driver Teambition) chunkUpload(file *model.FileStream, token string, accou
 		res, err := base.RestyClient.R().SetHeaders(map[string]string{
 			"Authorization": token,
 			"Content-Type":  "application/octet-stream",
-			"Referer":       "https://www.teambition.com/",
+			"Referer":       referer,
 		}).SetBody(chunkData).Post(u)
 		if err != nil {
 			return nil, err

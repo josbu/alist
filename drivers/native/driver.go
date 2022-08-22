@@ -71,7 +71,6 @@ func (driver Native) File(path string, account *model.Account) (*model.File, err
 	time := f.ModTime()
 	file := &model.File{
 		Name:      f.Name(),
-		Size:      f.Size(),
 		UpdatedAt: &time,
 		Driver:    driver.Config().Name,
 	}
@@ -79,6 +78,7 @@ func (driver Native) File(path string, account *model.Account) (*model.File, err
 		file.Type = conf.FOLDER
 	} else {
 		file.Type = utils.GetFileType(filepath.Ext(f.Name()))
+		file.Size = f.Size()
 	}
 	return file, nil
 }
@@ -103,7 +103,6 @@ func (driver Native) Files(path string, account *model.Account) ([]model.File, e
 		time := f.ModTime()
 		file := model.File{
 			Name:      f.Name(),
-			Size:      f.Size(),
 			Type:      0,
 			UpdatedAt: &time,
 			Driver:    driver.Config().Name,
@@ -112,8 +111,13 @@ func (driver Native) Files(path string, account *model.Account) ([]model.File, e
 			file.Type = conf.FOLDER
 		} else {
 			file.Type = utils.GetFileType(filepath.Ext(f.Name()))
+			file.Size = f.Size()
 		}
 		files = append(files, file)
+	}
+	_, err = base.GetCache(path, account)
+	if len(files) != 0 && err != nil {
+		_ = base.SetCache(path, files, account)
 	}
 	return files, nil
 }
@@ -132,7 +136,7 @@ func (driver Native) Link(args base.Args, account *model.Account) (*base.Link, e
 		return nil, base.ErrNotFile
 	}
 	link := base.Link{
-		Url: fullPath,
+		FilePath: fullPath,
 	}
 	return &link, nil
 }

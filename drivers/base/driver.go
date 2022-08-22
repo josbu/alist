@@ -5,6 +5,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 	"net/http"
+	"time"
 )
 
 type DriverConfig struct {
@@ -18,8 +19,9 @@ type DriverConfig struct {
 }
 
 type Args struct {
-	Path string
-	IP   string
+	Path   string
+	IP     string
+	Header http.Header
 }
 
 type Driver interface {
@@ -86,17 +88,19 @@ func GetDriversMap() map[string]Driver {
 func GetDrivers() map[string][]Item {
 	res := make(map[string][]Item)
 	for k, v := range driversMap {
+		webdavDirect := Item{
+			Name:        "webdav_direct",
+			Label:       "webdav direct",
+			Type:        TypeBool,
+			Required:    true,
+			Description: "Transfer the WebDAV of this account through the native",
+		}
 		if v.Config().OnlyProxy {
-			res[k] = v.Items()
+			res[k] = append([]Item{
+				webdavDirect,
+			}, v.Items()...)
 		} else {
 			res[k] = append([]Item{
-				//{
-				//	Name:        "allow_proxy",
-				//	Label:       "allow_proxy",
-				//	Type:        TypeBool,
-				//	Required:    true,
-				//	Description: "allow proxy",
-				//},
 				{
 					Name:        "proxy",
 					Label:       "proxy",
@@ -111,13 +115,14 @@ func GetDrivers() map[string][]Item {
 					Required:    true,
 					Description: "Transfer the WebDAV of this account through the server",
 				},
+				webdavDirect,
 			}, v.Items()...)
 		}
 		res[k] = append([]Item{
 			{
 				Name:  "down_proxy_url",
 				Label: "down_proxy_url",
-				Type:  TypeString,
+				Type:  TypeText,
 			},
 			{
 				Name:   "extract_folder",
@@ -160,6 +165,8 @@ func GetDrivers() map[string][]Item {
 var NoRedirectClient *resty.Client
 var RestyClient = resty.New()
 var HttpClient = &http.Client{}
+var UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"
+var DefaultTimeout = time.Second * 20
 
 func init() {
 	NoRedirectClient = resty.New().SetRedirectPolicy(
@@ -167,8 +174,8 @@ func init() {
 			return http.ErrUseLastResponse
 		}),
 	)
-	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36"
-	NoRedirectClient.SetHeader("user-agent", userAgent)
-	RestyClient.SetHeader("user-agent", userAgent)
+	NoRedirectClient.SetHeader("user-agent", UserAgent)
+	RestyClient.SetHeader("user-agent", UserAgent)
 	RestyClient.SetRetryCount(3)
+	RestyClient.SetTimeout(DefaultTimeout)
 }

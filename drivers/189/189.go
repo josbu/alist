@@ -7,6 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/Xhofe/alist/conf"
 	"github.com/Xhofe/alist/drivers/base"
 	"github.com/Xhofe/alist/model"
@@ -14,14 +22,6 @@ import (
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"math"
-	"net/http"
-	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var client189Map map[string]*resty.Client
@@ -59,11 +59,9 @@ func (driver Cloud189) FormatFile(file *Cloud189File) *model.File {
 		f.UpdatedAt = &lastOpTime
 	}
 	if file.Size == -1 {
-		f.Type = conf.FOLDER
 		f.Size = 0
-	} else {
-		f.Type = utils.GetFileType(filepath.Ext(file.Name))
 	}
+	f.Type = file.GetType()
 	return f
 }
 
@@ -88,12 +86,6 @@ func (driver Cloud189) FormatFile(file *Cloud189File) *model.File {
 //	return nil, ErrPathNotFound
 //}
 
-type Cloud189Down struct {
-	ResCode         int    `json:"res_code"`
-	ResMessage      string `json:"res_message"`
-	FileDownloadUrl string `json:"fileDownloadUrl"`
-}
-
 type LoginResp struct {
 	Msg    string `json:"msg"`
 	Result int    `json:"result"`
@@ -102,20 +94,20 @@ type LoginResp struct {
 
 // Login refer to PanIndex
 func (driver Cloud189) Login(account *model.Account) error {
-	client, ok := client189Map[account.Name]
-	if !ok {
-		//cookieJar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-		client = resty.New()
-		//client.SetCookieJar(cookieJar)
-		client.SetRetryCount(3)
-		client.SetHeader("Referer", "https://cloud.189.cn/")
-	}
+	client := resty.New()
+	//client.SetCookieJar(cookieJar)
+	client.SetTimeout(base.DefaultTimeout)
+	client.SetRetryCount(3)
+	client.SetHeader("Referer", "https://cloud.189.cn/")
+	client.SetHeader("User-Agent", base.UserAgent)
 	url := "https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https%3A%2F%2Fcloud.189.cn%2Fmain.action"
 	b := ""
 	lt := ""
 	ltText := regexp.MustCompile(`lt = "(.+?)"`)
+	var res *resty.Response
+	var err error
 	for i := 0; i < 3; i++ {
-		res, err := client.R().Get(url)
+		res, err = client.R().Get(url)
 		if err != nil {
 			return err
 		}
@@ -133,7 +125,8 @@ func (driver Cloud189) Login(account *model.Account) error {
 		}
 	}
 	if lt == "" {
-		return fmt.Errorf("get empty login page")
+		return fmt.Errorf("get page: %s \nstatus: %d \nrequest url: %s\nredirect url: %s",
+			b, res.StatusCode(), res.RawResponse.Request.URL.String(), res.Header().Get("location"))
 	}
 	captchaToken := regexp.MustCompile(`captchaToken' value='(.+?)'`).FindStringSubmatch(b)[1]
 	returnUrl := regexp.MustCompile(`returnUrl = '(.+?)'`).FindStringSubmatch(b)[1]
@@ -173,7 +166,7 @@ func (driver Cloud189) Login(account *model.Account) error {
 	passwordRsa := RsaEncode([]byte(account.Password), jRsakey, true)
 	url = "https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do"
 	var loginResp LoginResp
-	res, err := client.R().
+	res, err = client.R().
 		SetHeaders(map[string]string{
 			"lt":         lt,
 			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36",
@@ -524,7 +517,7 @@ func (driver Cloud189) NewUpload(file *model.FileStream, account *model.Account)
 	}
 	res, err := driver.UploadRequest("/person/initMultiUpload", map[string]string{
 		"parentFolderId": parentFile.Id,
-		"fileName":       file.Name,
+		"fileName":       encode(file.Name),
 		"fileSize":       strconv.FormatInt(int64(file.Size), 10),
 		"sliceSize":      strconv.FormatInt(int64(DEFAULT), 10),
 		"lazyCheck":      "1",
@@ -579,6 +572,7 @@ func (driver Cloud189) NewUpload(file *model.FileStream, account *model.Account)
 
 		r, err := base.HttpClient.Do(req)
 		log.Debugf("%+v %+v", r, r.Request.Header)
+		r.Body.Close()
 		if err != nil {
 			return err
 		}

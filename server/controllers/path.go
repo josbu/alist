@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"github.com/Xhofe/alist/conf"
 	"github.com/Xhofe/alist/drivers/base"
-	"github.com/Xhofe/alist/drivers/operate"
 	"github.com/Xhofe/alist/model"
 	"github.com/Xhofe/alist/server/common"
 	"github.com/Xhofe/alist/utils"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 func Pagination(files []model.File, req *common.PathReq) (int, []model.File) {
@@ -60,6 +60,7 @@ type Meta struct {
 	Driver string `json:"driver"`
 	Upload bool   `json:"upload"`
 	Total  int    `json:"total"`
+	Readme string `json:"readme"`
 	//Pages  int    `json:"pages"`
 }
 
@@ -75,42 +76,17 @@ func Path(c *gin.Context) {
 	_, ok := c.Get("admin")
 	meta, _ := model.GetMetaByPath(req.Path)
 	upload := false
-	if meta != nil && meta.Upload {
-		upload = true
-	}
-	if model.AccountsCount() > 1 && (req.Path == "/" || req.Path == "") {
-		files, err := model.GetAccountFiles()
-		if err != nil {
-			common.ErrorResp(c, err, 500)
-			return
-		}
-		if !ok {
-			files = common.Hide(meta, files)
-		}
-		c.JSON(200, common.Resp{
-			Code:    200,
-			Message: "success",
-			Data: PathResp{
-				Type: "folder",
-				Meta: Meta{
-					Driver: "root",
-				},
-				Files: files,
-			},
-		})
-		return
+	readme := ""
+	if meta != nil {
+		upload = meta.Upload
+		readme = meta.Readme
 	}
 	err := CheckPagination(&req)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	account, path, driver, err := common.ParsePath(req.Path)
-	if err != nil {
-		common.ErrorResp(c, err, 500)
-		return
-	}
-	file, files, err := operate.Path(driver, account, path)
+	file, files, account, driver, path, err := common.Path(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
@@ -119,7 +95,7 @@ func Path(c *gin.Context) {
 		// 对于中转文件或只能中转,将链接修改为中转链接
 		if driver.Config().OnlyProxy || account.Proxy {
 			if account.DownProxyUrl != "" {
-				file.Url = fmt.Sprintf("%s%s?sign=%s", account.DownProxyUrl, req.Path, utils.SignWithToken(file.Name, conf.Token))
+				file.Url = fmt.Sprintf("%s%s?sign=%s", strings.Split(account.DownProxyUrl, "\n")[0], req.Path, utils.SignWithToken(file.Name, conf.Token))
 			} else {
 				file.Url = fmt.Sprintf("//%s/p%s?sign=%s", c.Request.Host, req.Path, utils.SignWithToken(file.Name, conf.Token))
 			}
@@ -146,10 +122,14 @@ func Path(c *gin.Context) {
 		if !ok {
 			files = common.Hide(meta, files)
 		}
-		if driver.Config().LocalSort {
-			model.SortFiles(files, account)
+		driverName := "root"
+		if driver != nil {
+			if driver.Config().LocalSort {
+				model.SortFiles(files, account)
+			}
+			model.ExtractFolder(files, account)
+			driverName = driver.Config().Name
 		}
-		model.ExtractFolder(files, account)
 		total, files := Pagination(files, &req)
 		c.JSON(200, common.Resp{
 			Code:    200,
@@ -157,9 +137,10 @@ func Path(c *gin.Context) {
 			Data: PathResp{
 				Type: "folder",
 				Meta: Meta{
-					Driver: driver.Config().Name,
+					Driver: driverName,
 					Upload: upload,
 					Total:  total,
+					Readme: readme,
 				},
 				Files: files,
 			},

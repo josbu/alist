@@ -6,11 +6,23 @@ on:
       - '*'
 
 jobs:
+  changelog:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - run: npx changelogithub # or changelogithub@0.12 if ensure the stable result
+        env:
+          GITHUB_TOKEN: ${{secrets.MY_TOKEN}}
   release:
+    needs: changelog
     strategy:
       matrix:
         platform: [ubuntu-latest]
-        go-version: [1.17]
+        go-version: [1.18]
     name: Release
     runs-on: ${{ matrix.platform }}
     steps:
@@ -27,7 +39,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Set up xgo
+      - name: Install upx
         run: |
           docker pull techknowlogick/xgo:latest
           go install src.techknowlogick.com/xgo@latest

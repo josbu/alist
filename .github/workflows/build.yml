@@ -2,16 +2,16 @@ name: build
 
 on:
   push:
-    branches: [ v2 ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ v2 ]
+    branches: [ '**' ]
 
 jobs:
   build:
     strategy:
       matrix:
         platform: [ubuntu-latest]
-        go-version: [1.17]
+        go-version: [1.18]
     name: Build
     runs-on: ${{ matrix.platform }}
     steps:
@@ -28,10 +28,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          ref: v2
           path: alist
 
-      - name: Set up xgo
+      - name: Install dependencies
         run: |
           docker pull techknowlogick/xgo:latest
           go install src.techknowlogick.com/xgo@latest

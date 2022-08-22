@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"flag"
+
 	"github.com/Xhofe/alist/conf"
 	log "github.com/sirupsen/logrus"
 )
@@ -12,7 +13,7 @@ func InitLog() {
 		log.SetLevel(log.DebugLevel)
 		log.SetReportCaller(true)
 	}
-	if conf.Password {
+	if conf.Password || conf.Version {
 		log.SetLevel(log.WarnLevel)
 	}
 	log.SetFormatter(&log.TextFormatter{
@@ -30,6 +31,7 @@ func init() {
 	flag.BoolVar(&conf.Debug, "debug", false, "start with debug mode")
 	flag.BoolVar(&conf.Version, "version", false, "print version info")
 	flag.BoolVar(&conf.Password, "password", false, "print current password")
+	flag.BoolVar(&conf.Docker, "docker", false, "is using docker")
 	flag.Parse()
 	InitLog()
 }

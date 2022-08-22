@@ -35,7 +35,7 @@ func GetFileType(ext string) int {
 	if ext == "" {
 		return conf.UNKNOWN
 	}
-	ext = strings.ToLower(strings.TrimLeft(ext, "."))
+	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
 	if IsContain(conf.OfficeTypes, ext) {
 		return conf.OFFICE
 	}
@@ -126,4 +126,8 @@ func Join(elem ...string) string {
 
 func Split(p string) (string, string) {
 	return path.Split(p)
+}
+
+func Ext(name string) string {
+	return strings.TrimPrefix(path.Ext(name), ".")
 }

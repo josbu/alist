@@ -1,9 +1,18 @@
 package _23
 
 import (
+	"bytes"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+
 	"github.com/Xhofe/alist/conf"
 	"github.com/Xhofe/alist/drivers/base"
 	"github.com/Xhofe/alist/model"
@@ -13,12 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"io/ioutil"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strconv"
 )
 
 type Pan123 struct{}
@@ -67,6 +70,12 @@ func (driver Pan123) Items() []base.Item {
 			Required: true,
 			Default:  "asc",
 		},
+		{
+			Name:        "bool_1",
+			Label:       "stream upload",
+			Type:        base.TypeBool,
+			Description: "io stream upload (test)",
+		},
 	}
 }
 
@@ -108,10 +117,10 @@ func (driver Pan123) File(path string, account *model.Account) (*model.File, err
 
 func (driver Pan123) Files(path string, account *model.Account) ([]model.File, error) {
 	path = utils.ParsePath(path)
-	var rawFiles []Pan123File
+	var rawFiles []File
 	cache, err := base.GetCache(path, account)
 	if err == nil {
-		rawFiles, _ = cache.([]Pan123File)
+		rawFiles, _ = cache.([]File)
 	} else {
 		file, err := driver.File(path, account)
 		if err != nil {
@@ -125,7 +134,7 @@ func (driver Pan123) Files(path string, account *model.Account) ([]model.File, e
 			_ = base.SetCache(path, rawFiles, account)
 		}
 	}
-	files := make([]model.File, 0)
+	files := make([]model.File, 0, len(rawFiles))
 	for _, file := range rawFiles {
 		files = append(files, *driver.FormatFile(&file))
 	}
@@ -140,7 +149,7 @@ func (driver Pan123) Link(args base.Args, account *model.Account) (*base.Link, e
 	}
 	var resp Pan123DownResp
 	var headers map[string]string
-	if args.IP != "" && args.IP != "::1" {
+	if !utils.IsLocalIPAddr(args.IP) {
 		headers = map[string]string{
 			//"X-Real-IP":       "1.1.1.1",
 			"X-Forwarded-For": args.IP,
@@ -167,7 +176,7 @@ func (driver Pan123) Link(args base.Args, account *model.Account) (*base.Link, e
 		return nil, err
 	}
 	u_ := fmt.Sprintf("https://%s%s", u.Host, u.Path)
-	res, err := base.NoRedirectClient.R().SetQueryParamsFromValues(u.Query()).Get(u_)
+	res, err := base.NoRedirectClient.R().SetQueryParamsFromValues(u.Query()).Head(u_)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +184,7 @@ func (driver Pan123) Link(args base.Args, account *model.Account) (*base.Link, e
 	link := base.Link{
 		Url: resp.Data.DownloadUrl,
 	}
+	log.Debugln("res code: ", res.StatusCode())
 	if res.StatusCode() == 302 {
 		link.Url = res.Header().Get("location")
 	}
@@ -278,12 +288,13 @@ func (driver Pan123) Delete(path string, account *model.Account) error {
 	if err != nil {
 		return err
 	}
+	log.Debugln("delete 123 file: ", file)
 	data := base.Json{
 		"driveId":           0,
 		"operation":         true,
-		"fileTrashInfoList": file,
+		"fileTrashInfoList": []File{*file},
 	}
-	_, err = driver.Request("https://www.123pan.com/api/file/trash",
+	_, err = driver.Request("https://www.123pan.com/b/api/file/trash",
 		base.Post, nil, nil, &data, nil, false, account)
 	return err
 }
@@ -299,46 +310,57 @@ func (driver Pan123) Upload(file *model.FileStream, account *model.Account) erro
 	if !parentFile.IsDir() {
 		return base.ErrNotFolder
 	}
-	parentFileId, _ := strconv.Atoi(parentFile.Id)
-	tempFile, err := ioutil.TempFile("data/temp", "file-*")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
-	}()
-	_, err = io.Copy(tempFile, file)
-	if err != nil {
-		return err
-	}
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		return err
-	}
+
+	const DEFAULT int64 = 10485760
+	var uploadFile io.Reader
 	h := md5.New()
-	_, err = io.Copy(h, tempFile)
-	if err != nil {
-		return err
+	if account.Bool1 && file.GetSize() > uint64(DEFAULT) {
+		// 只计算前10MIB
+		buf := bytes.NewBuffer(make([]byte, 0, DEFAULT))
+		if n, err := io.CopyN(io.MultiWriter(buf, h), file, DEFAULT); err != io.EOF && n == 0 {
+			return err
+		}
+		// 增加额外参数防止MD5碰撞
+		h.Write([]byte(file.Name))
+		num := make([]byte, 8)
+		binary.BigEndian.PutUint64(num, file.Size)
+		h.Write(num)
+		// 拼装
+		uploadFile = io.MultiReader(buf, file)
+	} else {
+		// 计算完整文件MD5
+		tempFile, err := ioutil.TempFile(conf.Conf.TempDir, "file-*")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = tempFile.Close()
+			_ = os.Remove(tempFile.Name())
+		}()
+
+		if _, err = io.Copy(io.MultiWriter(tempFile, h), file); err != nil {
+			return err
+		}
+
+		_, err = tempFile.Seek(0, io.SeekStart)
+		if err != nil {
+			return err
+		}
+		uploadFile = tempFile
 	}
 	etag := hex.EncodeToString(h.Sum(nil))
-	log.Debugln("md5:", etag)
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		return err
-	}
 	data := base.Json{
 		"driveId":      0,
-		"duplicate":    true,
+		"duplicate":    2, // 2->覆盖 1->重命名 0->默认
 		"etag":         etag,
 		"fileName":     file.GetFileName(),
-		"parentFileId": parentFileId,
+		"parentFileId": parentFile.Id,
 		"size":         file.GetSize(),
 		"type":         0,
 	}
 	var resp UploadResp
 	_, err = driver.Request("https://www.123pan.com/api/file/upload_request",
-		base.Post, nil, nil, &data, &resp, false, account)
+		base.Post, map[string]string{"app-version": "1.1"}, nil, &data, &resp, false, account)
 	//res, err := driver.Post("https://www.123pan.com/api/file/upload_request", data, account)
 	if err != nil {
 		return err
@@ -360,7 +382,7 @@ func (driver Pan123) Upload(file *model.FileStream, account *model.Account) erro
 	input := &s3manager.UploadInput{
 		Bucket: &resp.Data.Bucket,
 		Key:    &resp.Data.Key,
-		Body:   tempFile,
+		Body:   uploadFile,
 	}
 	_, err = uploader.Upload(input)
 	if err != nil {

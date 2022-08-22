@@ -53,6 +53,7 @@ func (driver Onedrive) Items() []base.Item {
 			Label:    "redirect uri",
 			Type:     base.TypeString,
 			Required: true,
+			Default:  "https://tool.nn.ci/onedrive/callback",
 		},
 		{
 			Name:     "refresh_token",
@@ -175,7 +176,7 @@ func (driver Onedrive) Link(args base.Args, account *model.Account) (*base.Link,
 	if err != nil {
 		return nil, err
 	}
-	if file.File.MimeType == "" {
+	if file.File == nil {
 		return nil, base.ErrNotFile
 	}
 	link := base.Link{

@@ -158,10 +158,6 @@ func (driver MediaTrack) Preview(path string, account *model.Account) (interface
 }
 
 func (driver MediaTrack) MakeDir(path string, account *model.Account) error {
-	_, err := driver.File(path, account)
-	if err != base.ErrPathNotFound {
-		return nil
-	}
 	parentFile, err := driver.File(utils.Dir(path), account)
 	if err != nil {
 		return err
@@ -267,7 +263,7 @@ func (driver MediaTrack) Upload(file *model.FileStream, account *model.Account) 
 	if err != nil {
 		return err
 	}
-	tempFile, err := ioutil.TempFile("data/temp", "file-*")
+	tempFile, err := ioutil.TempFile(conf.Conf.TempDir, "file-*")
 	if err != nil {
 		return err
 	}
